@@ -3,6 +3,7 @@
 ## Table of Contents
 - [Introduction](#introduction)
 - [JWT Basics](#jwt-basics)
+- [Cryptographic Keys in JWT](#cryptographic-keys-in-jwt)
 - [Authentication vs Authorization](#authentication-vs-authorization)
 - [Pulsar JWT Implementation](#pulsar-jwt-implementation)
 - [Our Setup Deep Dive](#our-setup-deep-dive)
@@ -67,6 +68,260 @@ Decoded:
 - **Header**: `{"alg":"RS256","typ":"JWT"}`
 - **Payload**: `{"sub":"client1"}`
 - **Signature**: Signed with our private key
+
+## Cryptographic Keys in JWT
+
+### Symmetric vs Asymmetric Cryptography
+
+**Our Setup Uses: Asymmetric Cryptography (Public Key Cryptography)**
+
+JWT supports both symmetric and asymmetric cryptographic approaches for signing and verification:
+
+#### **Symmetric Key Cryptography**
+```
+Same key for signing AND verification
+┌─────────────┐    shared secret    ┌─────────────┐
+│   Token     │ ◄─────────────────► │   Verifier  │
+│  Generator  │      (HS256)        │  (Broker)   │
+└─────────────┘                     └─────────────┘
+```
+
+**Characteristics:**
+- **Algorithm**: HMAC-SHA256 (HS256)
+- **Key**: Same secret key for signing and verification
+- **Use Case**: Single service or trusted environment
+- **Security**: Shared secret must remain confidential
+- **Distribution**: Difficult to distribute securely
+
+#### **Asymmetric Key Cryptography (Our Setup)**
+```
+Private key for signing, Public key for verification
+┌─────────────┐    private key     ┌─────────────┐    public key      ┌─────────────┐
+│   Token     │ ◄─────────────────►│  Key Pair   │◄─────────────────► │   Verifier  │
+│  Generator  │      (RS256)       │             │     (RS256)        │  (Broker)   │
+└─────────────┘                    └─────────────┘                    └─────────────┘
+```
+
+**Characteristics:**
+- **Algorithm**: RSA-SHA256 (RS256) - what we use
+- **Keys**: Private key for signing, public key for verification
+- **Use Case**: Distributed systems, multiple services
+- **Security**: Private key kept secret, public key can be shared
+- **Distribution**: Public key can be safely distributed
+
+### RSA Key Pair in Our Setup
+
+#### **Key Generation Process**
+```bash
+# Our command generates RSA key pair (2048-bit)
+bin/pulsar tokens create-key-pair \
+  --output-private-key /keys/private.key \
+  --output-public-key /keys/public.key
+```
+
+**What happens:**
+1. **RSA Key Pair Generation**: Creates mathematically related private/public key pair
+2. **Private Key**: Used for signing JWTs (kept secure)
+3. **Public Key**: Used for verification (shared with brokers)
+4. **Key Size**: 2048-bit RSA (secure and industry standard)
+
+#### **Private Key (keys/private.key)**
+```
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...
+-----END PRIVATE KEY-----
+```
+
+**Purpose:**
+- **Token Signing**: Creates JWT signatures
+- **Security**: Must be kept absolutely secure
+- **Usage**: Only for token generation (offline process)
+- **Access**: Should be restricted to token generation systems
+
+**Mathematical Relationship:**
+- Contains both private and public key components
+- Can derive public key from private key (not reverse)
+- Uses RSA algorithm with large prime numbers
+
+#### **Public Key (keys/public.key)**
+```
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvK...
+-----END PUBLIC KEY-----
+```
+
+**Purpose:**
+- **Token Verification**: Validates JWT signatures
+- **Distribution**: Can be freely shared with all brokers
+- **Security**: Safe to expose (cannot generate tokens)
+- **Usage**: Real-time verification during client requests
+
+**Mathematical Relationship:**
+- Derived from private key during generation
+- Cannot be used to derive private key (one-way function)
+- Mathematically validates signatures created by private key
+
+### JWT Signing Process with RSA
+
+#### **Token Generation (using private key)**
+```
+1. Create Header: {"alg":"RS256","typ":"JWT"}
+2. Create Payload: {"sub":"client1"}
+3. Encode: Base64URL(header) + "." + Base64URL(payload)
+4. Sign: RSA-SHA256(encoded_data, private_key)
+5. Token: encoded_header.encoded_payload.signature
+```
+
+**Code representation:**
+```python
+# Simplified signing process
+import jwt
+
+# Our private key
+private_key = open('keys/private.key', 'r').read()
+
+# Create token
+token = jwt.encode(
+    payload={"sub": "client1"},
+    key=private_key,
+    algorithm="RS256"
+)
+```
+
+#### **Token Verification (using public key)**
+```
+1. Receive: header.payload.signature
+2. Extract: signature from token
+3. Re-create: RSA-SHA256(header.payload, public_key)
+4. Compare: provided_signature == computed_signature
+5. Result: Valid/Invalid + extracted claims
+```
+
+**Code representation:**
+```python
+# Simplified verification process
+import jwt
+
+# Our public key
+public_key = open('keys/public.key', 'r').read()
+
+# Verify token
+try:
+    payload = jwt.decode(
+        token=received_token,
+        key=public_key,
+        algorithms=["RS256"]
+    )
+    # payload = {"sub": "client1"}
+    print(f"Valid token for: {payload['sub']}")
+except jwt.InvalidTokenError:
+    print("Invalid token")
+```
+
+### Security Advantages of Our Asymmetric Approach
+
+#### **1. Key Distribution Security**
+```
+✓ Public key can be safely distributed to all brokers
+✓ No shared secrets to manage across multiple services
+✓ Private key only needed on token generation system
+✓ Compromised public key doesn't allow token generation
+```
+
+#### **2. Scalability**
+```
+✓ Multiple brokers can verify tokens independently
+✓ No need to synchronize secrets across cluster
+✓ Easy to add new broker instances
+✓ Centralized token generation, distributed verification
+```
+
+#### **3. Operational Security**
+```
+✓ Token generation can be offline/isolated
+✓ Brokers never need access to signing capability
+✓ Clear separation of concerns (sign vs verify)
+✓ Private key can be stored in secure key management systems
+```
+
+### Key File Analysis in Our Setup
+
+#### **File: keys/private.key**
+```bash
+# Example content structure
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7xKE...
+[Base64 encoded RSA private key data]
+...
+-----END PRIVATE KEY-----
+```
+
+**Technical Details:**
+- **Format**: PKCS#8 PEM format
+- **Algorithm**: RSA
+- **Key Size**: 2048 bits
+- **Encoding**: Base64 within PEM structure
+- **Usage**: Token signing only
+
+#### **File: keys/public.key**
+```bash
+# Example content structure  
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvKxHE...
+[Base64 encoded RSA public key data]
+...
+-----END PUBLIC KEY-----
+```
+
+**Technical Details:**
+- **Format**: PKCS#8 PEM format
+- **Algorithm**: RSA
+- **Key Size**: 2048 bits (same as private key)
+- **Encoding**: Base64 within PEM structure
+- **Usage**: Token verification only
+
+### Comparison: Symmetric vs Asymmetric in Pulsar Context
+
+| Aspect | Symmetric (HS256) | Asymmetric (RS256) - Our Choice |
+|--------|------------------|----------------------------------|
+| **Key Management** | Shared secret across all services | Private key secure, public key distributed |
+| **Token Generation** | Any service with shared secret | Only systems with private key |
+| **Token Verification** | Any service with shared secret | Any service with public key |
+| **Security Risk** | Shared secret compromise = full breach | Private key compromise = signing risk only |
+| **Scalability** | Difficult to distribute secrets | Easy to distribute public keys |
+| **Performance** | Faster (HMAC operations) | Slightly slower (RSA operations) |
+| **Use Case** | Single service, trusted environment | Distributed systems, multiple brokers |
+| **Our Setup** | ❌ Not used | ✅ Used (RS256) |
+
+### Why We Chose Asymmetric (RS256)
+
+**1. Distributed Architecture**
+```
+Multiple Pulsar brokers need to verify tokens
+Public key can be safely shared with all brokers
+No need to synchronize secrets across cluster
+```
+
+**2. Security Isolation**
+```
+Token generation happens offline/separately
+Brokers only have verification capability
+Compromised broker cannot generate valid tokens
+```
+
+**3. Operational Benefits**
+```
+Easy to add new brokers (just copy public key)
+Clear separation between token issuance and verification
+Supports centralized token management
+```
+
+**4. Industry Standard**
+```
+RS256 is widely adopted for distributed JWT systems
+Better support in enterprise environments
+Compatible with external JWT systems and tools
+```
 
 ## Authentication vs Authorization
 
