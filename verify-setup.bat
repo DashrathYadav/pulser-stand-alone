@@ -12,7 +12,7 @@ if errorlevel 1 (
     echo   Please install Docker Desktop and make sure it's running
     exit /b 1
 ) else (
-    echo ✓ Docker is installed and running
+    echo [OK] Docker is installed and running
 )
 
 echo.
@@ -22,35 +22,35 @@ echo.
 
 echo Step 3: Checking generated files...
 if exist "keys\private.key" (
-    echo ✓ Private key exists: keys\private.key
+    echo [OK] Private key exists: keys\private.key
 ) else (
     echo ✗ Private key missing: keys\private.key
     echo   Run: setup-pulsar-jwt.bat
 )
 
 if exist "keys\public.key" (
-    echo ✓ Public key exists: keys\public.key
+    echo [OK] Public key exists: keys\public.key
 ) else (
     echo ✗ Public key missing: keys\public.key
     echo   Run: setup-pulsar-jwt.bat
 )
 
 if exist "tokens\admin-token.txt" (
-    echo ✓ Admin token exists: tokens\admin-token.txt
+    echo [OK] Admin token exists: tokens\admin-token.txt
 ) else (
     echo ✗ Admin token missing: tokens\admin-token.txt
     echo   Run: setup-pulsar-jwt.bat
 )
 
 if exist "tokens\client1-token.txt" (
-    echo ✓ Client1 token exists: tokens\client1-token.txt
+    echo [OK] Client1 token exists: tokens\client1-token.txt
 ) else (
     echo ✗ Client1 token missing: tokens\client1-token.txt
     echo   Run: setup-pulsar-jwt.bat
 )
 
 if exist "tokens\client2-token.txt" (
-    echo ✓ Client2 token exists: tokens\client2-token.txt
+    echo [OK] Client2 token exists: tokens\client2-token.txt
 ) else (
     echo ✗ Client2 token missing: tokens\client2-token.txt
     echo   Run: setup-pulsar-jwt.bat
@@ -64,7 +64,7 @@ if errorlevel 1 (
     echo   Check if containers are running: docker-compose ps
     echo   Check broker logs: docker logs broker
 ) else (
-    echo ✓ Broker is responding and authentication working
+    echo [OK] Broker is responding and authentication working
 )
 
 echo.
@@ -74,7 +74,7 @@ if errorlevel 1 (
     echo ✗ Cannot check permissions
     echo   Run: setup-pulsar-jwt.bat
 ) else (
-    echo ✓ Permissions are configured
+    echo [OK] Permissions are configured
     echo   Current permissions:
     docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces permissions public/default
 )
@@ -86,13 +86,13 @@ if errorlevel 1 (
     echo ✗ Python is not installed or not in PATH
     echo   Install Python 3.7+ and add to PATH
 ) else (
-    echo ✓ Python is available
+    echo [OK] Python is available
     python -c "import pulsar" >nul 2>&1
     if errorlevel 1 (
         echo ✗ pulsar-client module not installed
         echo   Run: pip install -r requirements.txt
     ) else (
-        echo ✓ pulsar-client module is installed
+        echo [OK] pulsar-client module is installed
     )
 )
 

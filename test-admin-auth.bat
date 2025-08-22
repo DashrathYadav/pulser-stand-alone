@@ -31,7 +31,7 @@ if errorlevel 1 (
     echo Admin token may be invalid
     exit /b 1
 ) else (
-    echo ✓ Authenticated health check successful!
+    echo [OK] Authenticated health check successful!
 )
 
 echo.
@@ -41,7 +41,7 @@ if errorlevel 1 (
     echo ERROR: List tenants failed
     exit /b 1
 ) else (
-    echo ✓ List tenants successful!
+    echo [OK] List tenants successful!
 )
 
 echo.
@@ -51,7 +51,7 @@ if errorlevel 1 (
     echo ERROR: List namespaces failed
     exit /b 1
 ) else (
-    echo ✓ List namespaces successful!
+    echo [OK] List namespaces successful!
 )
 
 echo.
