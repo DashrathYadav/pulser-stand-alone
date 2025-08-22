@@ -1,0 +1,110 @@
+version: '3.8' # Using a modern Docker Compose version
+
+networks:
+  pulsar:
+    driver: bridge # Defines a bridge network for inter-container communication
+
+services:
+  zookeeper:
+    image: apachepulsar/pulsar-all:latest # Using the latest apachepulsar/pulsar-all image
+    container_name: zookeeper
+    restart: on-failure # Restarts the container if it fails
+    networks:
+      - pulsar
+    volumes:
+      # Map a local directory to persist ZooKeeper data
+      - ./data/zookeeper:/pulsar/data/zookeeper
+    environment:
+      - metadataStoreUrl=zk:zookeeper:2181 # ZooKeeper connection string
+      - PULSAR_MEM=-Xms256m -Xmx256m -XX:MaxDirectMemorySize=256m # Memory settings for ZooKeeper
+    command: >
+      bash -c "bin/apply-config-from-env.py conf/zookeeper.conf && \
+      bin/generate-zookeeper-config.sh conf/zookeeper.conf && \
+      exec bin/pulsar zookeeper"
+    healthcheck: # Checks if the ZooKeeper service is healthy
+      test: ["CMD", "bin/pulsar-zookeeper-ruok.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  pulsar-init: # Initializes cluster metadata (required for BookKeeper and Broker)
+    image: apachepulsar/pulsar-all:latest
+    container_name: pulsar-init
+    hostname: pulsar-init
+    networks:
+      - pulsar
+    command: >
+      bash -c "bin/pulsar initialize-cluster-metadata \
+      --cluster cluster-a \
+      --zookeeper zookeeper:2181 \
+      --configuration-store zookeeper:2181 \
+      --web-service-url http://broker:8080 \
+      --broker-service-url pulsar://broker:6650"
+    depends_on: # Ensures ZooKeeper is healthy before initialization
+      zookeeper:
+        condition: service_healthy
+
+  bookie:
+    image: apachepulsar/pulsar-all:latest
+    container_name: bookie
+    restart: on-failure
+    networks:
+      - pulsar
+    volumes:
+      # Map a local directory to persist BookKeeper data
+      - ./data/bookkeeper:/pulsar/data/bookkeeper
+    environment:
+      - clusterName=cluster-a # Cluster name for BookKeeper
+      - zkServers=zookeeper:2181 # ZooKeeper connection string for BookKeeper
+      - metadataServiceUri=metadata-store:zk:zookeeper:2181 # Metadata store URI
+      - advertisedAddress=bookie # Advertised address for BookKeeper
+      - BOOKIE_MEM=-Xms512m -Xmx512m -XX:MaxDirectMemorySize=256m # Memory settings for BookKeeper
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      pulsar-init:
+        condition: service_completed_successfully # Ensures initialization is complete
+    command: bash -c "bin/apply-config-from-env.py conf/bookkeeper.conf && exec bin/pulsar bookie"
+
+  broker:
+    image: apachepulsar/pulsar-all:latest
+    container_name: broker
+    hostname: broker
+    restart: on-failure
+    networks:
+      - pulsar
+    ports:
+      - "6650:6650" # Pulsar client port
+      - "8080:8080" # Pulsar admin/web service port
+    volumes:
+      - ./keys:/pulsar/keys # Mount JWT keys directory
+      - ./tokens:/pulsar/tokens # Mount tokens directory for admin token
+    environment:
+      - metadataStoreUrl=zk:zookeeper:2181 # ZooKeeper connection string for the broker
+      - zookeeperServers=zookeeper:2181 # ZooKeeper connection for the broker
+      - clusterName=cluster-a # Cluster name for the broker
+      - managedLedgerDefaultEnsembleSize=1 # For development only, use 3 or more in production
+      - managedLedgerDefaultWriteQuorum=1 # For development only, use 3 or more in production
+      - managedLedgerDefaultAckQuorum=1 # For development only, use 3 or more in production
+      - advertisedAddress=localhost # Advertised address for external clients
+      - advertisedListeners=external:pulsar://localhost:6650 # External listener configuration
+      - functionsWorkerEnabled=true # Enable Pulsar Functions worker within the broker
+      # Set the cluster name for the functions worker, matching the broker's cluster name
+      - pulsarFunctionsCluster=cluster-a
+      - PULSAR_MEM=-Xms512m -Xmx512m -XX:MaxDirectMemorySize=256m # Memory settings for the broker
+      # JWT Authentication Configuration
+      - authenticationEnabled=true
+      - authenticationProviders=org.apache.pulsar.broker.authentication.AuthenticationProviderToken
+      - brokerClientAuthenticationPlugin=org.apache.pulsar.client.impl.auth.AuthenticationToken
+      - brokerClientAuthenticationParameters=file:///pulsar/tokens/admin-token.txt
+      - tokenPublicKey=file:///pulsar/keys/public.key
+      - superUserRoles=admin
+      # Authorization Configuration
+      - authorizationEnabled=true
+      - authorizationProvider=org.apache.pulsar.broker.authorization.PulsarAuthorizationProvider
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      bookie:
+        condition: service_started # Ensures BookKeeper is started
+    command: bash -c "bin/apply-config-from-env.py conf/broker.conf && exec bin/pulsar broker"
