@@ -110,16 +110,14 @@ echo Setting up tenants and namespaces
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" tenants create public --allowed-clusters cluster-a 2>nul || echo "Tenant already exists"
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces create public/default 2>nul || echo "Namespace already exists"
 
-REM Set up comprehensive permissions
+REM Set up namespace-level permissions (applies to all topics in namespace)
 echo Setting up client permissions
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role client1 --actions produce,consume,functions
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role client2 --actions produce,consume,functions
 
-REM Create test topic with permissions
+REM Create test topic (inherits namespace permissions automatically)
 echo Creating test topic
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics create persistent://public/default/test-topic 2>nul || echo "Topic already exists"
-docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics grant-permission persistent://public/default/test-topic --role client1 --actions produce,consume
-docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics grant-permission persistent://public/default/test-topic --role client2 --actions produce,consume
 
 echo.
 echo Step 5: Verifying setup

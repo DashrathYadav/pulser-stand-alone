@@ -70,7 +70,37 @@ pulser stand alone\
 
 ## Permission Management
 
-**Note**: Initial permissions are automatically set by `setup-pulsar-jwt.bat`. Use these commands to modify permissions after setup.
+**Note**: Initial permissions are automatically set by `setup-pulsar-jwt.bat` using namespace-level permissions only. Use these commands to modify permissions after setup.
+
+### Permission Hierarchy and Configuration
+
+Pulsar uses a hierarchical permission model with multiple levels of configuration:
+
+```
+Tenant (public)
+  └── Namespace (default, custom-namespace) ← Permissions apply to ALL topics
+      ├── Topic (test-topic) ← Inherits namespace permissions
+      ├── Topic (logs-topic) ← Can override with specific permissions
+      └── Topic (metrics-topic) ← Inherits namespace permissions
+```
+
+#### **Permission Levels (from broad to specific):**
+
+| Level | Scope | When to Use | Command Pattern |
+|-------|-------|-------------|----------------|
+| **Tenant** | All namespaces in tenant | Multi-tenant setups | `tenants grant-permission` |
+| **Namespace** | All topics in namespace | **Most common** (our setup) | `namespaces grant-permission` |
+| **Topic** | Single specific topic | Fine-grained control | `topics grant-permission` |
+
+#### **Permission Inheritance:**
+- ✅ **Namespace permissions** apply to ALL topics (current and future)
+- 🎯 **Topic permissions** override namespace permissions for that specific topic
+- 🔒 **Most specific permission wins** (Topic > Namespace > Tenant)
+
+#### **Our Setup Uses:**
+- **Namespace-level permissions only** (simplest and most common)
+- Covers all topics in `public/default` namespace
+- No topic-specific permissions needed (inherits from namespace)
 
 ### View Current Permissions
 
@@ -85,29 +115,72 @@ docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces list public
 ```
 
-### Grant Permissions
+### Configurable Permission Levels
 
+#### **1. Tenant-Level Permissions (Broadest)**
 ```cmd
-# Grant namespace permissions to existing clients
+# Grant permissions across ALL namespaces in tenant
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" tenants grant-permission public --role admin-user --actions produce,consume,functions
+
+# Use case: Multi-tenant setup where one role needs access to everything
+```
+
+#### **2. Namespace-Level Permissions (Recommended - Our Setup)**
+```cmd
+# Grant permissions to ALL topics in namespace (current and future)
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role client1 --actions produce,consume,functions
 
-# Grant topic permissions
-docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics grant-permission persistent://public/default/test-topic --role client1 --actions produce,consume
+# Create new namespace with specific permissions
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces create public/logs
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/logs --role log-reader --actions consume
+```
 
-# Create new client with specific permissions
+#### **3. Topic-Level Permissions (Most Specific)**
+```cmd
+# Grant permissions to specific topic only (overrides namespace permissions)
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics grant-permission persistent://public/default/sensitive-topic --role client1 --actions consume
+
+# Use case: Restrict access to sensitive topics while allowing general access
+```
+
+### Grant Permissions
+
+#### **Create New Client with Permissions**
+```cmd
+# Step 1: Generate new token
 docker run --rm -v "%CD%/keys:/keys" -v "%CD%/tokens:/tokens" apachepulsar/pulsar-all:latest bin/pulsar tokens create --private-key /keys/private.key --subject newclient > tokens\newclient-token.txt
 
+# Step 2: Grant namespace permissions (recommended)
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role newclient --actions consume
+```
+
+#### **Modify Existing Client Permissions**
+```cmd
+# Add more actions to existing client
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role client1 --actions produce,consume,functions,sources,sinks
 ```
 
 ### Revoke Permissions
 
+#### **Tenant-Level Revoke**
 ```cmd
-# Remove all permissions for a role from namespace
+# Remove all permissions for a role from entire tenant
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" tenants revoke-permission public --role admin-user
+```
+
+#### **Namespace-Level Revoke**
+```cmd
+# Remove all permissions for a role from namespace (most common)
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces revoke-permission public/default --role client1
 
-# Remove all permissions for a role from topic
-docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics revoke-permission persistent://public/default/test-topic --role client1
+# Remove from specific namespace
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces revoke-permission public/logs --role log-reader
+```
+
+#### **Topic-Level Revoke**
+```cmd
+# Remove permissions for a role from specific topic only
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics revoke-permission persistent://public/default/sensitive-topic --role client1
 ```
 
 ### Available Actions
@@ -123,23 +196,45 @@ docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.
 
 ### Common Permission Scenarios
 
-**Make a client read-only:**
+#### **Scenario 1: Read-Only Client**
 ```cmd
+# Revoke existing permissions
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces revoke-permission public/default --role client1
 
+# Grant only consume permission (applies to all topics in namespace)
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role client1 --actions consume
 ```
 
-**Give a client full admin permissions:**
+#### **Scenario 2: Write-Only Client**
 ```cmd
+# Create new write-only client
+docker run --rm -v "%CD%/keys:/keys" -v "%CD%/tokens:/tokens" apachepulsar/pulsar-all:latest bin/pulsar tokens create --private-key /keys/private.key --subject writeonly > tokens\writeonly-token.txt
+
+# Grant only produce permission
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role writeonly --actions produce
+```
+
+#### **Scenario 3: Full Admin Client**
+```cmd
+# Give client full admin permissions on namespace
 docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role client2 --actions produce,consume,functions,sources,sinks,packages
 ```
 
-**Create a write-only client:**
+#### **Scenario 4: Multi-Namespace Access**
 ```cmd
-docker run --rm -v "%CD%/keys:/keys" -v "%CD%/tokens:/tokens" apachepulsar/pulsar-all:latest bin/pulsar tokens create --private-key /keys/private.key --subject writeonly > tokens\writeonly-token.txt
+# Create client with access to multiple namespaces
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces create public/metrics
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role datacollector --actions produce
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/metrics --role datacollector --actions produce
+```
 
-docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role writeonly --actions produce
+#### **Scenario 5: Topic-Specific Override**
+```cmd
+# Client has general namespace access but restricted access to sensitive topic
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" namespaces grant-permission public/default --role client1 --actions produce,consume
+
+# Override: only consume access to sensitive topic
+docker exec broker bin/pulsar-admin --auth-plugin org.apache.pulsar.client.impl.auth.AuthenticationToken --auth-params "file:///pulsar/tokens/admin-token.txt" topics grant-permission persistent://public/default/sensitive-data --role client1 --actions consume
 ```
 
 ## Troubleshooting
